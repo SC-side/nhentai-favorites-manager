@@ -13,6 +13,18 @@ DevTools Protocol (CDP) — no manual cookie copying required.
 - One-click open in Chrome
 - Dark-themed React UI
 
+## Screenshots
+
+> The demo below uses **placeholder data and sample covers** — not real content.
+
+| Library | Filtered by tag |
+| :---: | :---: |
+| ![Library grid](docs/screenshot-library.png) | ![Filtering by tag](docs/screenshot-filter.png) |
+
+**Detail view**
+
+![Detail modal](docs/screenshot-detail.png)
+
 ## Tech Stack
 
 - **Backend:** Python 3, Flask, SQLite
