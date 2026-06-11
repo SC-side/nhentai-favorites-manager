@@ -31,24 +31,43 @@ DevTools Protocol (CDP) — no manual cookie copying required.
 git clone https://github.com/SC-side/nhentai-favorites-manager.git
 cd nhentai-favorites-manager
 
-pip install -r requirements.txt
-playwright install chromium
-
+pip install -r requirements.txt          # Flask, Playwright, Requests
 cp config.example.json config.json
 ```
+
+> **Note:** you do *not* need to run `playwright install chromium`. Syncing connects to
+> your own Chrome via CDP and never launches Playwright's bundled browser. You can also
+> leave `config.json` as-is for now — cookies are only needed if cover thumbnails fail to
+> load in the web UI (see [Configuration](#configuration)).
 
 ## Usage
 
 ### 1. Start Chrome in debug mode
 
+**macOS:**
+
 ```bash
 bash start_chrome.sh
 ```
 
-This launches a dedicated Chrome profile with remote debugging on port 9222.
-On first run, log in to nhentai.net in the window that opens.
+**Windows / Linux** — `start_chrome.sh` is macOS-only, so launch Chrome manually
+(close your other Chrome windows first):
+
+```bash
+# Windows (PowerShell)
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="chrome-debug-profile"
+
+# Linux
+google-chrome --remote-debugging-port=9222 --user-data-dir=./chrome-debug-profile
+```
+
+This opens a dedicated Chrome profile with remote debugging on port 9222. On first run,
+log in to nhentai.net in that window. **Keep this Chrome window open** while syncing —
+`sync.py` connects to it.
 
 ### 2. Sync your favorites
+
+With the debug Chrome from step 1 still running:
 
 ```bash
 python sync.py                 # incremental sync (stops after 2 pages with nothing new)
@@ -71,11 +90,21 @@ Copy `config.example.json` to `config.json` and adjust as needed:
 
 | Key | Description |
 |---|---|
-| `cookies` | Used by the cover-image proxy when fetching thumbnails from nhentai's CDN |
+| `cookies` | *(optional)* Only used by the cover-image proxy — see [Cookies](#cookies-optional) below |
 | `user_agent` | User-Agent header sent with cover requests |
 | `browser_path` | Override path to Chrome/Firefox; leave empty for auto-detection |
 | `port` | Port for the Flask web UI (default `5001`) |
 | `request_delay` | Seconds to wait between requests during sync, to avoid rate limiting |
+
+### Cookies (optional)
+
+Syncing does **not** need cookies — it uses your logged-in Chrome session. The cookies in
+`config.json` are only used by the web UI's cover-image proxy. If cover thumbnails fail to
+load, add your nhentai cookies:
+
+1. Log in to nhentai.net, press **F12** → **Network** tab → refresh the page.
+2. Click any request → **Headers** → **Request Headers**, and copy the value of the **Cookie:** field.
+3. Paste at least `cf_clearance` and `access_token` into the `cookies` object in `config.json`.
 
 ## Project Structure
 
