@@ -1,0 +1,39 @@
+# ─────────────────────────────────────────────
+# Private data & credentials — NEVER commit these
+# ─────────────────────────────────────────────
+
+# Cookies / access tokens (cf_clearance, access_token, refresh_token)
+config.json
+
+# Personal collection database (SQLite + its WAL/SHM sidecar files)
+collection.db
+collection.db-wal
+collection.db-shm
+
+# Locally cached cover images
+cover_cache/
+
+# Chrome debug profile — contains your logged-in browser session
+chrome-debug-profile/
+
+# ─────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Playwright browser downloads, if ever stored in-repo
+.playwright/
+
+# ─────────────────────────────────────────────
+# Editor / OS / tooling
+# ─────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/settings.local.json

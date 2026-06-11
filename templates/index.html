@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>nhentai Collection Manager</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useLayoutEffect, useRef, useCallback } = React;
+
+        const COVER_TYPE_MAP = { j: "jpg", p: "png", g: "gif" };
+        const TAG_TYPES = [
+            { key: "artist", label: "Artist" },
+            { key: "group", label: "Group" },
+            { key: "parody", label: "Parody" },
+            { key: "character", label: "Character" },
+            { key: "tag", label: "Tag" },
+            { key: "language", label: "Language" },
+            { key: "category", label: "Category" },
+        ];
+        const ITEMS_PER_PAGE = 24;
+
+        // --- Icon Wrapper (same as existing App) ---
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const containerRef = useRef(null);
+            const kebabName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+
+            useLayoutEffect(() => {
+                const container = containerRef.current;
+                if (!container) return;
+                const tempIcon = document.createElement('i');
+                tempIcon.setAttribute('data-lucide', kebabName);
+                container.innerHTML = '';
+                container.appendChild(tempIcon);
+                lucide.createIcons({
+                    root: container,
+                    name: kebabName,
+                    attrs: { class: className, width: size, height: size }
+                });
+                return () => { if (container) container.innerHTML = ''; };
+            }, [name, size, className, kebabName]);
+
+            return <span ref={containerRef} style={{ display: 'contents' }}></span>;
+        };
+
+        // --- Toast Component ---
+        const Toast = ({ message, onClose }) => {
+            useEffect(() => {
+                const timer = setTimeout(onClose, 2000);
+                return () => clearTimeout(timer);
+            }, [onClose]);
+
+            return (
+                <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-indigo-600 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-2 z-50 animate-slide-up">
+                    <Icon name="CheckCircle" size={20} />
+                    <span className="font-bold">{message}</span>
+                </div>
+            );
+        };
+
+        // --- Rating Stars (same toggle logic as existing App) ---
+        const RatingStars = React.memo(({ rating, interactive, onChange }) => (
+            <div className="flex gap-1">
+                {[1, 2, 3].map(s => (
+                    <button key={s} type="button"
+                        onClick={(e) => {
+                            if (interactive) {
+                                e.stopPropagation();
+                                if (s === 1 && rating === 1) {
+                                    onChange(null); // Clear to unrated
+                                } else {
+                                    onChange(s);
+                                }
+                            }
+                        }}
+                        className={`${interactive ? "cursor-pointer hover:scale-110" : "cursor-default"} transition-transform`}
+                    >
+                        <Icon name="Star" size={interactive ? 22 : 16}
+                            className={s <= (rating || 0) ? "text-yellow-400 fill-yellow-400" : "text-gray-600"} />
+                    </button>
+                ))}
+            </div>
+        ));
+
+        // --- Detail Modal ---
+        const DetailModal = ({ item, selectedTags, onClose, onTagClick, onRatingChange, onOpenIncognito }) => {
+            const getTitle = (item) => item.title_pretty || item.title_en || item.title_ja || `#${item.nhentai_id}`;
+
+            const tagsByType = TAG_TYPES.map(t => ({
+                ...t,
+                tags: item.tags.filter(tag => tag.type === t.key),
+            })).filter(t => t.tags.length > 0);
+
+            const tagColorMap = {
+                artist: "bg-pink-900/60 text-pink-200 border-pink-700/50 hover:bg-pink-700/70",
+                group: "bg-orange-900/60 text-orange-200 border-orange-700/50 hover:bg-orange-700/70",
+                parody: "bg-purple-900/60 text-purple-200 border-purple-700/50 hover:bg-purple-700/70",
+                character: "bg-green-900/60 text-green-200 border-green-700/50 hover:bg-green-700/70",
+                tag: "bg-slate-700/80 text-slate-200 border-slate-600/50 hover:bg-slate-600/80",
+                language: "bg-blue-900/60 text-blue-200 border-blue-700/50 hover:bg-blue-700/70",
+                category: "bg-teal-900/60 text-teal-200 border-teal-700/50 hover:bg-teal-700/70",
+            };
+
+            const formatDate = (ts) => {
+                if (!ts) return null;
+                return new Date(ts * 1000).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in"
+                     onClick={onClose}>
+                    <div className="bg-slate-800 w-full max-w-2xl rounded-2xl border border-slate-700 shadow-2xl max-h-[90vh] flex flex-col"
+                         onClick={e => e.stopPropagation()}>
+                        {/* Header */}
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-start gap-3 flex-shrink-0">
+                            <div className="flex-1 min-w-0">
+                                <h2 className="text-base font-bold text-white leading-snug">{getTitle(item)}</h2>
+                                {item.title_ja && item.title_ja !== item.title_pretty && (
+                                    <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{item.title_ja}</p>
+                                )}
+                                {item.title_en && item.title_en !== item.title_pretty && item.title_en !== item.title_ja && (
+                                    <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{item.title_en}</p>
+                                )}
+                            </div>
+                            <button onClick={onClose} className="text-slate-400 hover:text-white flex-shrink-0 mt-0.5">
+                                <Icon name="X" size={20} />
+                            </button>
+                        </div>
+
+                        {/* Body (scrollable) */}
+                        <div className="overflow-y-auto p-4 flex flex-col gap-4">
+                            {/* Meta row */}
+                            <div className="flex items-center gap-4 text-xs text-slate-400 flex-wrap">
+                                <span className="font-mono text-indigo-400 font-bold text-sm">#{item.nhentai_id}</span>
+                                <span className="flex items-center gap-1"><Icon name="FileText" size={13} />{item.pages} pages</span>
+                                {item.uploaded_at && <span className="flex items-center gap-1"><Icon name="Upload" size={13} />Uploaded: {formatDate(item.uploaded_at)}</span>}
+                                {item.favorited_at && <span className="flex items-center gap-1"><Icon name="Heart" size={13} />Favorited: {formatDate(item.favorited_at)}</span>}
+                            </div>
+
+                            {/* Rating */}
+                            <div className="flex items-center gap-3">
+                                <span className="text-xs text-slate-400">Rating</span>
+                                <RatingStars rating={item.rating} interactive={true} onChange={(r) => onRatingChange(item.nhentai_id, r)} />
+                            </div>
+
+                            {/* Tags grouped by type */}
+                            <div className="flex flex-col gap-3">
+                                {tagsByType.map(group => (
+                                    <div key={group.key}>
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5 font-medium">{group.label}</p>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {group.tags.map(tag => (
+                                                <button key={tag.id}
+                                                    onClick={() => onTagClick(tag)}
+                                                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors cursor-pointer ${
+                                                        selectedTags.includes(tag.id)
+                                                            ? "bg-indigo-600 text-white border-indigo-500 shadow"
+                                                            : tagColorMap[group.key] || tagColorMap.tag
+                                                    }`}>
+                                                    {selectedTags.includes(tag.id) && <span className="mr-1">✓</span>}
+                                                    {tag.name}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Notes */}
+                            {item.notes && (
+                                <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
+                                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-medium">Notes</p>
+                                    <p className="text-sm text-slate-300 whitespace-pre-wrap">{item.notes}</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="p-4 border-t border-slate-700 flex justify-end flex-shrink-0">
+                            <button onClick={() => { onOpenIncognito(item.nhentai_id); onClose(); }}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg font-bold shadow-lg transition-transform active:scale-95 flex items-center gap-2 text-sm">
+                                <Icon name="ExternalLink" size={16} /> Open
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Notes Modal ---
+        const NotesModal = ({ item, onClose, onSave }) => {
+            const [notes, setNotes] = useState(item.notes || "");
+
+            const handleSave = async () => {
+                await fetch(`/api/doujinshi/${item.nhentai_id}/notes`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ notes }),
+                });
+                onSave(item.nhentai_id, notes);
+                onClose();
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in"
+                     onClick={onClose}>
+                    <div className="bg-slate-800 w-full max-w-lg rounded-2xl border border-slate-700 shadow-2xl"
+                         onClick={e => e.stopPropagation()}>
+                        <div className="p-4 border-b border-slate-700 flex justify-between items-center">
+                            <h2 className="text-lg font-bold text-white">
+                                {item.title_pretty || item.title_en || item.title_ja || `#${item.nhentai_id}`}
+                            </h2>
+                            <button onClick={onClose} className="text-slate-400 hover:text-white">
+                                <Icon name="X" />
+                            </button>
+                        </div>
+                        <div className="p-4">
+                            <label className="text-xs text-slate-400 mb-1 block">Notes</label>
+                            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows="5"
+                                className="w-full bg-slate-900 border border-slate-600 rounded p-3 text-white focus:ring-2 focus:ring-indigo-500 outline-none resize-none"
+                                placeholder="Enter personal notes..."
+                            />
+                        </div>
+                        <div className="p-4 border-t border-slate-700 flex justify-end gap-3">
+                            <button onClick={onClose}
+                                className="text-slate-400 hover:text-white px-4 py-2 hover:bg-slate-700 rounded transition-colors">
+                                Cancel
+                            </button>
+                            <button onClick={handleSave}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded font-bold shadow-lg transition-transform active:scale-95 flex items-center gap-2">
+                                <Icon name="Save" size={18} /> Save
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- Pagination (first « / prev ‹ / page numbers / next › / last ») ---
+        const Pagination = ({ currentPage, totalPages, onPageChange }) => {
+            if (totalPages <= 1) return null;
+
+            // Page list: always show the first and last page, plus 2 pages on each side of the current page; gaps are collapsed with …
+            const pageList = useMemo(() => {
+                const delta = 2;
+                const nums = [];
+                for (let i = 1; i <= totalPages; i++) {
+                    if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
+                        nums.push(i);
+                    }
+                }
+                const out = [];
+                let prev = null;
+                for (const n of nums) {
+                    if (prev !== null && n - prev > 1) out.push("…");
+                    out.push(n);
+                    prev = n;
+                }
+                return out;
+            }, [currentPage, totalPages]);
+
+            const isFirst = currentPage === 1;
+            const isLast = currentPage === totalPages;
+            const navBtn = "w-9 h-9 flex items-center justify-center rounded-full text-slate-300 hover:bg-slate-700 hover:text-white disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-300 disabled:cursor-not-allowed transition-colors";
+
+            return (
+                <div className="flex justify-center items-center gap-1 sm:gap-1.5 mt-8 py-4 flex-wrap select-none">
+                    <button onClick={() => onPageChange(1)} disabled={isFirst} className={navBtn} title="First page">
+                        <Icon name="ChevronsLeft" size={20} />
+                    </button>
+                    <button onClick={() => onPageChange(currentPage - 1)} disabled={isFirst} className={navBtn} title="Previous page">
+                        <Icon name="ChevronLeft" size={20} />
+                    </button>
+
+                    {pageList.map((p, idx) =>
+                        p === "…" ? (
+                            <span key={`gap-${idx}`} className="w-9 h-9 flex items-center justify-center text-slate-500">…</span>
+                        ) : (
+                            <button key={p} onClick={() => onPageChange(p)}
+                                className={`h-9 min-w-[2.25rem] px-2 flex items-center justify-center rounded-full text-sm transition-colors ${
+                                    p === currentPage
+                                        ? "bg-indigo-600 text-white font-bold shadow-lg"
+                                        : "text-slate-300 font-medium hover:bg-slate-700 hover:text-white"
+                                }`}>
+                                {p}
+                            </button>
+                        )
+                    )}
+
+                    <button onClick={() => onPageChange(currentPage + 1)} disabled={isLast} className={navBtn} title="Next page">
+                        <Icon name="ChevronRight" size={20} />
+                    </button>
+                    <button onClick={() => onPageChange(totalPages)} disabled={isLast} className={navBtn} title="Last page">
+                        <Icon name="ChevronsRight" size={20} />
+                    </button>
+                </div>
+            );
+        };
+
+        // --- Main App ---
+        const App = () => {
+            // Data state
+            const [items, setItems] = useState([]);
+            const [total, setTotal] = useState(0);
+            const [totalPages, setTotalPages] = useState(1);
+            const [loading, setLoading] = useState(false);
+
+            // Filter state
+            const [currentPage, setCurrentPage] = useState(1);
+            const [searchQuery, setSearchQuery] = useState("");
+            const [debouncedSearch, setDebouncedSearch] = useState("");
+            const [selectedTagType, setSelectedTagType] = useState("artist");
+            const [availableTags, setAvailableTags] = useState([]);
+            const [selectedTags, setSelectedTags] = useState([]);
+            const [sortBy, setSortBy] = useState("favorited_at");
+            const [sortOrder, setSortOrder] = useState("desc");
+            const [ratingFilter, setRatingFilter] = useState("All");
+
+            // UI state
+            const [toastMsg, setToastMsg] = useState(null);
+            const [notesItem, setNotesItem] = useState(null);
+            const [detailItem, setDetailItem] = useState(null);
+            const [stats, setStats] = useState(null);
+
+            // Debounce search
+            useEffect(() => {
+                const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+                return () => clearTimeout(timer);
+            }, [searchQuery]);
+
+            // Reset page on filter change
+            useEffect(() => {
+                setCurrentPage(1);
+            }, [debouncedSearch, selectedTags, sortBy, sortOrder, ratingFilter]);
+
+            // Scroll to top on page change
+            useEffect(() => {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }, [currentPage]);
+
+            // Fetch doujinshi data
+            useEffect(() => {
+                const fetchData = async () => {
+                    setLoading(true);
+                    const params = new URLSearchParams({
+                        page: currentPage,
+                        per_page: ITEMS_PER_PAGE,
+                        sort: sortBy,
+                        order: sortOrder,
+                    });
+                    if (debouncedSearch) params.set("search", debouncedSearch);
+                    if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
+                    if (ratingFilter !== "All") params.set("rating", ratingFilter);
+
+                    try {
+                        const resp = await fetch(`/api/doujinshi?${params}`);
+                        const data = await resp.json();
+                        setItems(data.items);
+                        setTotal(data.total);
+                        setTotalPages(data.pages);
+                    } catch (err) {
+                        console.error("Failed to fetch:", err);
+                    }
+                    setLoading(false);
+                };
+                fetchData();
+            }, [currentPage, debouncedSearch, selectedTags, sortBy, sortOrder, ratingFilter]);
+
+            // Fetch tags for selected type
+            useEffect(() => {
+                const fetchTags = async () => {
+                    try {
+                        const resp = await fetch(`/api/tags?type=${selectedTagType}`);
+                        const data = await resp.json();
+                        setAvailableTags(data.tags);
+                    } catch (err) {
+                        console.error("Failed to fetch tags:", err);
+                    }
+                };
+                fetchTags();
+            }, [selectedTagType]);
+
+            // Fetch stats once
+            useEffect(() => {
+                fetch("/api/stats").then(r => r.json()).then(setStats).catch(() => {});
+            }, []);
+
+            // --- Handlers ---
+            const handleRatingChange = async (nhentaiId, rating) => {
+                try {
+                    await fetch(`/api/doujinshi/${nhentaiId}/rating`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ rating }),
+                    });
+                    setItems(prev => prev.map(item =>
+                        item.nhentai_id === nhentaiId ? { ...item, rating } : item
+                    ));
+                    const label = rating ? `${rating} ${rating === 1 ? "star" : "stars"}` : "Unrated";
+                    setToastMsg(`Rating updated: ${label}`);
+                } catch (err) {
+                    setToastMsg("Failed to update rating");
+                }
+            };
+
+            const handleOpenIncognito = async (nhentaiId) => {
+                try {
+                    const resp = await fetch(`/api/open/${nhentaiId}`);
+                    const data = await resp.json();
+                    if (data.status === "opened") {
+                        setToastMsg("Opened in a new window");
+                    } else {
+                        // Fallback: copy to clipboard
+                        await navigator.clipboard.writeText(data.url);
+                        setToastMsg("Link copied");
+                    }
+                } catch (err) {
+                    const url = `https://nhentai.net/g/${nhentaiId}/`;
+                    await navigator.clipboard.writeText(url);
+                    setToastMsg("Link copied");
+                }
+            };
+
+            const toggleTag = (tagId) => {
+                setSelectedTags(prev =>
+                    prev.includes(tagId) ? prev.filter(t => t !== tagId) : [...prev, tagId]
+                );
+            };
+
+            const handleTagClickFromDetail = (tag) => {
+                setSelectedTagType(tag.type);
+                setSelectedTags(prev =>
+                    prev.includes(tag.id) ? prev.filter(t => t !== tag.id) : [...prev, tag.id]
+                );
+                setDetailItem(null);
+            };
+
+            const handleNotesSave = (nhentaiId, notes) => {
+                setItems(prev => prev.map(item =>
+                    item.nhentai_id === nhentaiId ? { ...item, notes } : item
+                ));
+                setToastMsg("Notes saved");
+            };
+
+            const getCoverUrl = (item) => {
+                // Fetch the cover through the backend proxy to avoid nhentai's CDN hotlink protection
+                return `/api/cover/${item.media_id}/${item.cover_type || 'j'}`;
+            };
+
+            const getTitle = (item) => item.title_pretty || item.title_en || item.title_ja || `#${item.nhentai_id}`;
+            const getSubtitle = (item) => {
+                if (item.title_pretty && item.title_ja && item.title_ja !== item.title_pretty) {
+                    return item.title_ja;
+                }
+                if (item.title_en && item.title_en !== getTitle(item)) {
+                    return item.title_en;
+                }
+                return null;
+            };
+
+            return (
+                <div className="min-h-screen pb-20">
+                    {/* Header */}
+                    <header className="bg-slate-800 border-b border-slate-700 sticky top-0 z-30 shadow-md p-4">
+                        <div className="flex flex-col md:flex-row gap-4 items-center justify-between max-w-7xl mx-auto">
+                            <div className="flex items-center gap-3 w-full md:w-auto">
+                                <div className="bg-indigo-600 p-2 rounded">
+                                    <Icon name="FolderOpen" className="text-white" />
+                                </div>
+                                <div>
+                                    <h1 className="text-xl font-bold text-white">nhentai Collection</h1>
+                                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                                        <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                        {stats ? `${stats.total} total` : "Loading..."}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex-1 w-full relative max-w-lg">
+                                <Icon name="Search" className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                                <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                                    placeholder="Search titles, notes..."
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-full py-2 pl-10 pr-4 text-sm text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                                />
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                {/* Sort */}
+                                <select value={sortBy} onChange={e => setSortBy(e.target.value)}
+                                    className="bg-slate-900 text-slate-300 text-sm border border-slate-700 rounded px-2 py-1 outline-none">
+                                    <option value="favorited_at">Date favorited</option>
+                                    <option value="uploaded_at">Date uploaded</option>
+                                    <option value="pages">Pages</option>
+                                    <option value="rating">Rating</option>
+                                </select>
+                                <button onClick={() => setSortOrder(prev => prev === "desc" ? "asc" : "desc")}
+                                    className="bg-slate-900 border border-slate-700 rounded p-1.5 text-slate-300 hover:text-white transition-colors"
+                                    title={sortOrder === "desc" ? "Descending" : "Ascending"}>
+                                    <Icon name={sortOrder === "desc" ? "ChevronDown" : "ChevronUp"} size={16} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Filters Row */}
+                        <div className="max-w-7xl mx-auto mt-4 flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                            {/* Rating filter */}
+                            <select value={ratingFilter} onChange={e => setRatingFilter(e.target.value)}
+                                className="bg-slate-900 text-slate-300 text-sm border border-slate-700 rounded px-2 py-1 outline-none">
+                                <option value="All">All ratings</option>
+                                <option value="3">★★★</option>
+                                <option value="2">★★</option>
+                                <option value="1">★</option>
+                                <option value="0">Unrated</option>
+                            </select>
+
+                            <div className="hidden sm:block w-px h-6 bg-slate-700 mx-1"></div>
+
+                            {/* Tag type tabs */}
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                                {TAG_TYPES.map(t => (
+                                    <button key={t.key} onClick={() => { setSelectedTagType(t.key); setSelectedTags([]); }}
+                                        className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                                            selectedTagType === t.key
+                                                ? 'bg-indigo-600 text-white'
+                                                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'
+                                        }`}>
+                                        {t.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div className="hidden sm:block w-px h-6 bg-slate-700 mx-1"></div>
+
+                            {/* Tag chips */}
+                            <div className="flex-1 w-full overflow-x-auto pb-2 no-scrollbar flex items-center gap-2">
+                                {selectedTags.length > 0 && (
+                                    <button onClick={() => setSelectedTags([])}
+                                        className="flex items-center gap-1 bg-red-500/20 text-red-300 px-3 py-1 rounded-full text-xs border border-red-500/30 whitespace-nowrap hover:bg-red-500/30">
+                                        <Icon name="X" size={12} /> Clear
+                                    </button>
+                                )}
+                                {availableTags.slice(0, 80).map(tag => (
+                                    <button key={tag.id} onClick={() => toggleTag(tag.id)}
+                                        className={`px-3 py-1 rounded-full text-xs border whitespace-nowrap transition-colors flex items-center gap-1 ${
+                                            selectedTags.includes(tag.id)
+                                                ? 'bg-indigo-600 text-white border-indigo-500 shadow-md'
+                                                : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'
+                                        }`}>
+                                        {selectedTags.includes(tag.id) && <Icon name="CheckCircle" size={12} />}
+                                        {tag.name}
+                                        <span className="text-[10px] opacity-60">({tag.count})</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Results Info */}
+                    <div className="max-w-7xl mx-auto px-4 pt-4 flex items-center justify-between">
+                        <p className="text-sm text-slate-400">
+                            {loading ? "Loading..." : `${total} results`}
+                        </p>
+                    </div>
+
+                    {/* Main Grid */}
+                    <main className="max-w-7xl mx-auto p-4 min-h-[60vh]">
+                        {loading && items.length === 0 ? (
+                            <div className="text-center py-20 text-slate-500">
+                                <Icon name="RefreshCw" size={48} className="mx-auto mb-4 opacity-50 animate-spin" />
+                                <p>Loading...</p>
+                            </div>
+                        ) : items.length === 0 ? (
+                            <div className="text-center py-20 text-slate-500">
+                                <Icon name="Search" size={64} className="mx-auto mb-4 opacity-50" />
+                                <p>No matching works found</p>
+                            </div>
+                        ) : (
+                            <div className="columns-2 md:columns-3 lg:columns-5 xl:columns-6 gap-4 space-y-4">
+                                {items.map(item => (
+                                    <div key={item.nhentai_id}
+                                        className="break-inside-avoid group bg-slate-800 rounded-lg overflow-hidden border border-slate-700 hover:border-indigo-500 hover:ring-2 hover:ring-indigo-500/30 transition-all hover:shadow-xl cursor-pointer flex flex-col mb-4 relative">
+
+                                        {/* Cover Image */}
+                                        <div className="relative bg-slate-900 flex items-center justify-center overflow-hidden"
+                                             onClick={() => handleOpenIncognito(item.nhentai_id)}>
+                                            <img src={getCoverUrl(item)}
+                                                className="w-full h-auto object-cover group-hover:opacity-90 transition-opacity"
+                                                loading="lazy"
+                                                onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                                            />
+                                            <div className="w-full aspect-[2/3] items-center justify-center text-slate-700 hidden">
+                                                <Icon name="Image" size={32} />
+                                            </div>
+
+                                            {/* Pages badge (top left) */}
+                                            <div className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 rounded font-medium shadow backdrop-blur-sm border border-white/10 bg-slate-900/80 text-slate-200">
+                                                {item.pages}P
+                                            </div>
+
+                                            {/* Notes button (top right) */}
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); setNotesItem(item); }}
+                                                className="absolute top-2 right-2 bg-black/60 hover:bg-indigo-600 text-white p-1.5 rounded-full backdrop-blur-sm transition-colors opacity-0 group-hover:opacity-100"
+                                                title="Notes">
+                                                <Icon name="MoreHorizontal" size={16} />
+                                            </button>
+
+                                            {/* ID badge (bottom) */}
+                                            <div className="absolute bottom-0 right-0 left-0 bg-gradient-to-t from-black/90 to-transparent p-2 pt-8 flex justify-end items-end">
+                                                <div className="flex items-center gap-1 text-white font-mono font-bold text-sm drop-shadow-md">
+                                                    #{item.nhentai_id}
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Card Content */}
+                                        <div className="p-3" onClick={() => setDetailItem(item)}>
+                                            <h3 className="font-bold text-white text-sm leading-snug mb-1 group-hover:text-indigo-400 transition-colors line-clamp-2"
+                                                title={getTitle(item)}>
+                                                {getTitle(item)}
+                                            </h3>
+                                            {getSubtitle(item) && (
+                                                <p className="text-[11px] text-slate-500 mb-1.5 line-clamp-1">{getSubtitle(item)}</p>
+                                            )}
+
+                                            {/* Interactive Rating */}
+                                            <div className="flex items-center justify-between mb-2">
+                                                <RatingStars
+                                                    rating={item.rating}
+                                                    interactive={true}
+                                                    onChange={(r) => handleRatingChange(item.nhentai_id, r)}
+                                                />
+                                            </div>
+
+                                            {/* Tags */}
+                                            <div className="flex flex-wrap gap-1">
+                                                {item.tags
+                                                    .filter(t => t.type === "artist" || t.type === "parody" || t.type === "tag" || t.type === "language")
+                                                    .slice(0, 6)
+                                                    .map(t => (
+                                                        <span key={t.id}
+                                                            className={`text-[10px] px-1.5 py-0.5 rounded ${
+                                                                t.type === "artist" ? "bg-pink-900/60 text-pink-200" :
+                                                                t.type === "parody" ? "bg-purple-900/60 text-purple-200" :
+                                                                t.type === "language" ? "bg-blue-900/60 text-blue-200" :
+                                                                selectedTags.includes(t.id) ? "bg-indigo-600 text-white" :
+                                                                "bg-slate-700 text-slate-300"
+                                                            }`}>
+                                                            {t.type === "artist" ? "✎ " : t.type === "parody" ? "◈ " : ""}
+                                                            {t.name}
+                                                        </span>
+                                                    ))
+                                                }
+                                                {item.tags.filter(t => ["artist","parody","tag","language"].includes(t.type)).length > 6 && (
+                                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400">
+                                                        +{item.tags.filter(t => ["artist","parody","tag","language"].includes(t.type)).length - 6}
+                                                    </span>
+                                                )}
+                                            </div>
+
+                                            {/* Notes indicator */}
+                                            {item.notes && (
+                                                <p className="text-[10px] text-slate-500 mt-1.5 line-clamp-1 italic">
+                                                    📝 {item.notes}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Pagination */}
+                        <Pagination
+                            currentPage={currentPage}
+                            totalPages={totalPages}
+                            onPageChange={(p) => setCurrentPage(Math.min(totalPages, Math.max(1, p)))}
+                        />
+                    </main>
+
+                    {/* Toast */}
+                    {toastMsg && <Toast message={toastMsg} onClose={() => setToastMsg(null)} />}
+
+                    {/* Detail Modal */}
+                    {detailItem && (
+                        <DetailModal
+                            item={detailItem}
+                            selectedTags={selectedTags}
+                            onClose={() => setDetailItem(null)}
+                            onTagClick={handleTagClickFromDetail}
+                            onRatingChange={handleRatingChange}
+                            onOpenIncognito={handleOpenIncognito}
+                        />
+                    )}
+
+                    {/* Notes Modal */}
+                    {notesItem && (
+                        <NotesModal
+                            item={notesItem}
+                            onClose={() => setNotesItem(null)}
+                            onSave={handleNotesSave}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

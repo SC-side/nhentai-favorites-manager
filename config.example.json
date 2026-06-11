@@ -1,0 +1,11 @@
+{
+  "cookies": {
+    "cf_clearance": "",
+    "access_token": "",
+    "refresh_token": ""
+  },
+  "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "browser_path": "",
+  "port": 5001,
+  "request_delay": 1.5
+}
